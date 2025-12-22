@@ -89,7 +89,8 @@ const callOpenRouter = async (messages, modelKey = 'orchestration') => {
 
 const GOOGLE_CONFIG = {
   clientId: '652450540938-9o6ui6nh5dum7lk6oc444sqet927c3oj.apps.googleusercontent.com',
-  redirectUri: typeof window !== 'undefined' ? `${window.location.origin}/oauth/callback` : '',
+  // Use root URL for SPA OAuth flow - simpler and works with Cloudflare Pages
+  redirectUri: typeof window !== 'undefined' ? window.location.origin : '',
   scopes: [
     'https://www.googleapis.com/auth/gmail.readonly',
     'https://www.googleapis.com/auth/gmail.send',
@@ -1434,7 +1435,7 @@ const IntegrationsView = ({ integrations, setIntegrations, googleAuth }) => {
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">3</span>
-                    <span>Add redirect URI: <code className="bg-slate-800 px-2 py-0.5 rounded text-xs">{GOOGLE_CONFIG.redirectUri || window.location.origin + '/oauth/callback'}</code></span>
+                    <span>Add redirect URI: <code className="bg-slate-800 px-2 py-0.5 rounded text-xs">{GOOGLE_CONFIG.redirectUri || window.location.origin}</code></span>
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">4</span>
