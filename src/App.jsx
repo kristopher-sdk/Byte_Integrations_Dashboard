@@ -84,6 +84,324 @@ const callOpenRouter = async (messages, modelKey = 'orchestration') => {
 };
 
 // ============================================================================
+// GOOGLE WORKSPACE CONFIGURATION (AutoAcquireai.com)
+// ============================================================================
+
+const GOOGLE_CONFIG = {
+  clientId: '', // Add your Google Cloud Console Client ID
+  redirectUri: typeof window !== 'undefined' ? `${window.location.origin}/oauth/callback` : '',
+  scopes: [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/documents.readonly',
+    'https://www.googleapis.com/auth/spreadsheets.readonly',
+  ].join(' '),
+  authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenUrl: 'https://oauth2.googleapis.com/token',
+};
+
+// Google OAuth State Management
+const useGoogleAuth = () => {
+  const [googleToken, setGoogleToken] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('google_access_token');
+    }
+    return null;
+  });
+  const [googleUser, setGoogleUser] = useState(null);
+
+  const initiateGoogleOAuth = () => {
+    const state = Math.random().toString(36).substring(7);
+    sessionStorage.setItem('oauth_state', state);
+
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CONFIG.clientId,
+      redirect_uri: GOOGLE_CONFIG.redirectUri,
+      response_type: 'token',
+      scope: GOOGLE_CONFIG.scopes,
+      state: state,
+      access_type: 'online',
+      prompt: 'consent'
+    });
+
+    window.location.href = `${GOOGLE_CONFIG.authUrl}?${params}`;
+  };
+
+  const handleOAuthCallback = () => {
+    if (typeof window === 'undefined') return;
+
+    const hash = window.location.hash.substring(1);
+    const params = new URLSearchParams(hash);
+    const accessToken = params.get('access_token');
+
+    if (accessToken) {
+      localStorage.setItem('google_access_token', accessToken);
+      setGoogleToken(accessToken);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  };
+
+  const disconnectGoogle = () => {
+    localStorage.removeItem('google_access_token');
+    setGoogleToken(null);
+    setGoogleUser(null);
+  };
+
+  useEffect(() => {
+    handleOAuthCallback();
+  }, []);
+
+  return { googleToken, googleUser, initiateGoogleOAuth, disconnectGoogle, isConnected: !!googleToken };
+};
+
+// Gmail API Functions
+const GmailAPI = {
+  baseUrl: 'https://gmail.googleapis.com/gmail/v1',
+
+  async fetchEmails(token, maxResults = 20, query = '') {
+    try {
+      const params = new URLSearchParams({ maxResults, q: query });
+      const response = await fetch(
+        `${this.baseUrl}/users/me/messages?${params}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!response.ok) throw new Error('Failed to fetch emails');
+      const data = await response.json();
+
+      // Fetch full details for each message
+      const messages = await Promise.all(
+        (data.messages || []).slice(0, 10).map(msg => this.getEmail(token, msg.id))
+      );
+      return messages;
+    } catch (error) {
+      console.error('Gmail API error:', error);
+      return [];
+    }
+  },
+
+  async getEmail(token, messageId) {
+    const response = await fetch(
+      `${this.baseUrl}/users/me/messages/${messageId}?format=full`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+
+    const headers = data.payload?.headers || [];
+    const getHeader = (name) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+
+    return {
+      id: data.id,
+      threadId: data.threadId,
+      snippet: data.snippet,
+      subject: getHeader('Subject'),
+      from: getHeader('From'),
+      to: getHeader('To'),
+      date: getHeader('Date'),
+      labels: data.labelIds || [],
+      isUnread: data.labelIds?.includes('UNREAD'),
+    };
+  },
+
+  async getLabels(token) {
+    const response = await fetch(
+      `${this.baseUrl}/users/me/labels`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.labels || [];
+  },
+
+  async sendEmail(token, to, subject, body) {
+    const email = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      'Content-Type: text/html; charset=utf-8',
+      '',
+      body
+    ].join('\r\n');
+
+    const encodedEmail = btoa(email).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const response = await fetch(
+      `${this.baseUrl}/users/me/messages/send`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ raw: encodedEmail })
+      }
+    );
+    return response.ok;
+  },
+
+  async modifyLabels(token, messageId, addLabels = [], removeLabels = []) {
+    const response = await fetch(
+      `${this.baseUrl}/users/me/messages/${messageId}/modify`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ addLabelIds: addLabels, removeLabelIds: removeLabels })
+      }
+    );
+    return response.ok;
+  }
+};
+
+// Google Docs API Functions
+const DocsAPI = {
+  baseUrl: 'https://docs.googleapis.com/v1',
+
+  async getDocument(token, documentId) {
+    const response = await fetch(
+      `${this.baseUrl}/documents/${documentId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!response.ok) return null;
+    return response.json();
+  }
+};
+
+// Google Sheets API Functions
+const SheetsAPI = {
+  baseUrl: 'https://sheets.googleapis.com/v4',
+
+  async getSpreadsheet(token, spreadsheetId) {
+    const response = await fetch(
+      `${this.baseUrl}/spreadsheets/${spreadsheetId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!response.ok) return null;
+    return response.json();
+  },
+
+  async getValues(token, spreadsheetId, range) {
+    const response = await fetch(
+      `${this.baseUrl}/spreadsheets/${spreadsheetId}/values/${range}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!response.ok) return null;
+    return response.json();
+  }
+};
+
+// Google Drive API Functions
+const DriveAPI = {
+  baseUrl: 'https://www.googleapis.com/drive/v3',
+
+  async listFiles(token, query = '', maxResults = 20) {
+    const params = new URLSearchParams({
+      pageSize: maxResults,
+      fields: 'files(id,name,mimeType,modifiedTime,webViewLink)',
+      q: query || "trashed=false"
+    });
+    const response = await fetch(
+      `${this.baseUrl}/files?${params}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    return data.files || [];
+  }
+};
+
+// Inbox Automation Agent Definitions
+const INBOX_AUTOMATION_AGENTS = [
+  {
+    id: 101,
+    name: 'Email Triage Agent',
+    category: 'Morning Ops',
+    schedule: '0 6 * * 1-5',
+    status: 'idle',
+    progress: 0,
+    qualityScore: 95,
+    executions: 0,
+    avgRuntime: '1.5m',
+    model: 'orchestration',
+    tools: ['gmail'],
+    autoApproval: false,
+    systemPrompt: `You are an email triage assistant for AutoAcquireai.com. Analyze incoming emails and:
+1. Categorize by priority: Urgent, Important, Normal, Low
+2. Identify action items and deadlines
+3. Flag emails requiring immediate response
+4. Summarize key points for each email
+Output as structured JSON with priority, actionItems, and summary fields.`,
+    lastOutput: null
+  },
+  {
+    id: 102,
+    name: 'Lead Response Agent',
+    category: 'Productivity',
+    schedule: 'Hourly',
+    status: 'idle',
+    progress: 0,
+    qualityScore: 92,
+    executions: 0,
+    avgRuntime: '2.0m',
+    model: 'coding',
+    tools: ['gmail', 'sheets'],
+    autoApproval: false,
+    systemPrompt: `You are a lead response assistant for AutoAcquireai.com. When new leads come in:
+1. Draft personalized response emails
+2. Log lead details to tracking spreadsheet
+3. Set follow-up reminders
+4. Identify high-value opportunities
+Always maintain professional tone matching AutoAcquireai.com brand.`,
+    lastOutput: null
+  },
+  {
+    id: 103,
+    name: 'Invoice & Document Agent',
+    category: 'Productivity',
+    schedule: 'Daily',
+    status: 'idle',
+    progress: 0,
+    qualityScore: 94,
+    executions: 0,
+    avgRuntime: '3.0m',
+    model: 'architecture',
+    tools: ['gmail', 'drive', 'sheets'],
+    autoApproval: true,
+    systemPrompt: `You are a document processing assistant. Scan emails for:
+1. Invoices and receipts - extract amounts, dates, vendors
+2. Contracts and agreements - flag for review
+3. Reports and documents - categorize and file
+4. Update expense tracking spreadsheet
+Output extracted data in structured format.`,
+    lastOutput: null
+  },
+  {
+    id: 104,
+    name: 'Meeting Scheduler Agent',
+    category: 'Productivity',
+    schedule: 'Continuous',
+    status: 'idle',
+    progress: 0,
+    qualityScore: 91,
+    executions: 0,
+    avgRuntime: '1.0m',
+    model: 'orchestration',
+    tools: ['gmail', 'calendar'],
+    autoApproval: false,
+    systemPrompt: `You are a scheduling assistant. When meeting requests arrive:
+1. Check calendar availability
+2. Propose optimal meeting times
+3. Draft confirmation emails
+4. Create calendar events with proper details
+Prioritize client meetings and revenue-generating activities.`,
+    lastOutput: null
+  }
+];
+
+// ============================================================================
 // MODEL SELECTOR COMPONENT
 // ============================================================================
 
@@ -146,6 +464,9 @@ const ByteCommandCenter = () => {
   const [activeView, setActiveView] = useState('command');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedModel, setSelectedModel] = useState('orchestration');
+
+  // Google Workspace Auth
+  const googleAuth = useGoogleAuth();
 
   const [messages, setMessages] = useState([
     {
@@ -314,6 +635,7 @@ const ByteCommandCenter = () => {
             <IntegrationsView
               integrations={integrations}
               setIntegrations={setIntegrations}
+              googleAuth={googleAuth}
             />
           )}
           {activeView === 'memory' && (
@@ -963,9 +1285,38 @@ const OutboxCard = ({ item, onApprove, onReject }) => {
 // INTEGRATIONS VIEW
 // ============================================================================
 
-const IntegrationsView = ({ integrations, setIntegrations }) => {
+const IntegrationsView = ({ integrations, setIntegrations, googleAuth }) => {
   const categories = ['All', 'Productivity', 'Communication', 'Development', 'Analytics'];
   const [activeCategory, setActiveCategory] = useState('All');
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [emails, setEmails] = useState([]);
+  const [loadingEmails, setLoadingEmails] = useState(false);
+
+  const handleGoogleConnect = () => {
+    if (GOOGLE_CONFIG.clientId) {
+      googleAuth.initiateGoogleOAuth();
+    } else {
+      setShowGoogleModal(true);
+    }
+  };
+
+  const fetchRecentEmails = async () => {
+    if (!googleAuth.googleToken) return;
+    setLoadingEmails(true);
+    const fetchedEmails = await GmailAPI.fetchEmails(googleAuth.googleToken, 10, 'is:unread');
+    setEmails(fetchedEmails.filter(Boolean));
+    setLoadingEmails(false);
+  };
+
+  useEffect(() => {
+    if (googleAuth.isConnected) {
+      fetchRecentEmails();
+    }
+  }, [googleAuth.isConnected]);
+
+  const filteredIntegrations = activeCategory === 'All'
+    ? integrations
+    : integrations.filter(i => i.category === activeCategory);
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -991,16 +1342,125 @@ const IntegrationsView = ({ integrations, setIntegrations }) => {
         </button>
       </div>
 
+      {/* Google Workspace Connected Panel */}
+      {googleAuth.isConnected && (
+        <div className="mb-6 bg-gradient-to-r from-teal-500/10 to-emerald-500/10 border border-teal-500/30 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-teal-400 to-emerald-600 flex items-center justify-center">
+                <Mail className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-teal-400">Google Workspace Connected</h3>
+                <p className="text-sm text-slate-400">AutoAcquireai.com • Gmail, Docs, Sheets active</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchRecentEmails}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm flex items-center gap-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingEmails ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              <button
+                onClick={googleAuth.disconnectGoogle}
+                className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-sm"
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+
+          {/* Recent Emails Preview */}
+          {emails.length > 0 && (
+            <div className="mt-4">
+              <h4 className="text-sm font-medium text-slate-300 mb-3 flex items-center gap-2">
+                <Mail className="w-4 h-4 text-cyan-400" />
+                Unread Emails ({emails.length})
+              </h4>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {emails.map(email => (
+                  <div key={email.id} className="bg-slate-800/50 rounded-lg p-3 hover:bg-slate-800 transition-all">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{email.subject || '(No Subject)'}</p>
+                        <p className="text-xs text-slate-500 truncate">{email.from}</p>
+                      </div>
+                      <span className="text-xs text-slate-600 ml-2">{new Date(email.date).toLocaleDateString()}</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1 line-clamp-2">{email.snippet}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-4">
-        {integrations.map(integration => (
-          <IntegrationCard key={integration.id} integration={integration} />
+        {filteredIntegrations.map(integration => (
+          <IntegrationCard
+            key={integration.id}
+            integration={integration}
+            onConnect={integration.name === 'Google Workspace' ? handleGoogleConnect : undefined}
+            isGoogleConnected={integration.name === 'Google Workspace' && googleAuth.isConnected}
+          />
         ))}
       </div>
+
+      {/* Google Setup Modal */}
+      {showGoogleModal && (
+        <>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={() => setShowGoogleModal(false)} />
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl max-w-lg w-full">
+              <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Connect Google Workspace</h3>
+                <button onClick={() => setShowGoogleModal(false)} className="p-1 hover:bg-slate-800 rounded-lg">
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-6">
+                <p className="text-slate-400 mb-4">To connect Google Workspace for AutoAcquireai.com:</p>
+                <ol className="space-y-3 text-sm text-slate-300">
+                  <li className="flex items-start gap-3">
+                    <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">1</span>
+                    <span>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Google Cloud Console</a></span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">2</span>
+                    <span>Create OAuth 2.0 credentials (Web application)</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">3</span>
+                    <span>Add redirect URI: <code className="bg-slate-800 px-2 py-0.5 rounded text-xs">{GOOGLE_CONFIG.redirectUri || window.location.origin + '/oauth/callback'}</code></span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">4</span>
+                    <span>Enable Gmail, Drive, Docs, and Sheets APIs</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">5</span>
+                    <span>Copy Client ID and add to GOOGLE_CONFIG.clientId</span>
+                  </li>
+                </ol>
+                <div className="mt-6 p-4 bg-slate-800/50 rounded-lg">
+                  <p className="text-xs text-slate-500 mb-2">Required OAuth Scopes:</p>
+                  <code className="text-xs text-cyan-400 break-all">{GOOGLE_CONFIG.scopes}</code>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
 
-const IntegrationCard = ({ integration }) => {
+const IntegrationCard = ({ integration, onConnect, isGoogleConnected }) => {
+  const isConnected = isGoogleConnected !== undefined ? isGoogleConnected : integration.connected;
+
   return (
     <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-5 hover:border-slate-600 transition-all">
       <div className="flex items-start justify-between mb-4">
@@ -1013,17 +1473,20 @@ const IntegrationCard = ({ integration }) => {
             <p className="text-xs text-slate-500">{integration.category}</p>
           </div>
         </div>
-        <div className={`w-2.5 h-2.5 rounded-full ${integration.connected ? 'bg-teal-400' : 'bg-slate-600'}`} />
+        <div className={`w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-teal-400' : 'bg-slate-600'}`} />
       </div>
       <p className="text-sm text-slate-400 mb-4">{integration.description}</p>
       <div className="flex items-center justify-between">
         <span className="text-xs text-slate-500">VFS: {integration.vfsPath}</span>
-        <button className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-          integration.connected
-            ? 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-            : 'bg-cyan-500 text-slate-900 hover:bg-cyan-400'
-        }`}>
-          {integration.connected ? 'Configure' : 'Connect'}
+        <button
+          onClick={onConnect}
+          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            isConnected
+              ? 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+              : 'bg-cyan-500 text-slate-900 hover:bg-cyan-400'
+          }`}
+        >
+          {isConnected ? 'Configure' : 'Connect'}
         </button>
       </div>
     </div>
@@ -1310,6 +1773,8 @@ const INITIAL_AGENTS = [
   { id: 16, name: 'Review Synthesis', category: 'Improvement', schedule: '21:45', status: 'idle', progress: 0, qualityScore: 97, executions: 289, avgRuntime: '5.1m', lastOutput: null },
   { id: 24, name: 'Project Manager', category: 'Productivity', schedule: 'Hourly', status: 'running', progress: 23, qualityScore: 92, executions: 2341, avgRuntime: '1.2m', lastOutput: null },
   { id: 99, name: 'Heartbeat Agent', category: 'System', schedule: 'Hourly', status: 'idle', progress: 0, qualityScore: 99, executions: 8760, avgRuntime: '0.5m', lastOutput: null },
+  // Inbox Automation Agents for AutoAcquireai.com
+  ...INBOX_AUTOMATION_AGENTS,
 ];
 
 const INITIAL_OUTBOX = [
@@ -1325,7 +1790,7 @@ const INITIAL_INTEGRATIONS = [
   { id: 3, name: 'Slack', icon: MessageSquare, category: 'Communication', description: 'Team messaging and notifications', vfsPath: '/context/tools/slack', connected: true, gradient: 'from-violet-400 to-purple-600' },
   { id: 4, name: 'Fireflies', icon: Users, category: 'Meetings', description: 'Meeting transcription and insights', vfsPath: '/context/tools/fireflies', connected: false, gradient: 'from-cyan-400 to-teal-600' },
   { id: 5, name: 'Linear', icon: GitBranch, category: 'Development', description: 'Issue tracking and sprint management', vfsPath: '/context/tools/linear', connected: false, gradient: 'from-indigo-400 to-blue-600' },
-  { id: 6, name: 'Google Workspace', icon: Globe, category: 'Productivity', description: 'Google Drive, Docs, and Sheets', vfsPath: '/context/tools/google', connected: true, gradient: 'from-teal-400 to-emerald-600' },
+  { id: 6, name: 'Google Workspace', icon: Globe, category: 'Productivity', description: 'Gmail, Drive, Docs & Sheets for AutoAcquireai.com', vfsPath: '/context/tools/google', connected: false, gradient: 'from-teal-400 to-emerald-600' },
 ];
 
 export default ByteCommandCenter;
