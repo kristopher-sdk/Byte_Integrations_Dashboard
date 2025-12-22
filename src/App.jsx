@@ -88,7 +88,7 @@ const callOpenRouter = async (messages, modelKey = 'orchestration') => {
 // ============================================================================
 
 const GOOGLE_CONFIG = {
-  clientId: '', // Add your Google Cloud Console Client ID
+  clientId: '652450540938-9o6ui6nh5dum7lk6oc444sqet927c3oj.apps.googleusercontent.com',
   redirectUri: typeof window !== 'undefined' ? `${window.location.origin}/oauth/callback` : '',
   scopes: [
     'https://www.googleapis.com/auth/gmail.readonly',
