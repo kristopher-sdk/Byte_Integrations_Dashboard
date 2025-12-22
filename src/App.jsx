@@ -19,31 +19,31 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 const AI_MODELS = {
   orchestration: {
-    id: 'google/gemini-2.0-flash-exp',
+    id: 'google/gemini-3-pro-preview',
     name: 'Gemini 3.0 Pro',
     description: 'Orchestration & Planning',
     color: 'from-blue-400 to-indigo-500'
   },
   architecture: {
-    id: 'openai/gpt-4o',
+    id: 'openai/chatgpt-4o-latest',
     name: 'ChatGPT 5.2',
     description: 'Architecture & Design',
     color: 'from-green-400 to-emerald-500'
   },
   coding: {
-    id: 'anthropic/claude-3.5-sonnet',
+    id: 'anthropic/claude-sonnet-4.5',
     name: 'Claude Sonnet 4.5',
     description: 'Code Generation',
     color: 'from-orange-400 to-amber-500'
   },
   multiAgent: {
-    id: 'anthropic/claude-3-opus',
+    id: 'anthropic/claude-opus-4.5',
     name: 'Claude Opus 4.5',
     description: 'Multi-Agent Coordination',
     color: 'from-purple-400 to-violet-500'
   },
   webScraping: {
-    id: 'openai/gpt-4o',
+    id: 'openai/chatgpt-4o-latest',
     name: 'ChatGPT 5.2',
     description: 'Web Scraping & Data',
     color: 'from-cyan-400 to-teal-500'
